@@ -1,0 +1,26 @@
+{
+    "name": "bag2/monkey-patcher",
+    "description": "Runtime monkey patching (open classes) for PHP via PHP-Parser and uopz when available",
+    "license": "Apache-2.0",
+    "require": {
+        "php": "^8.0 || ^7.4",
+        "nikic/php-parser": "^5.0 || ^4.0"
+    },
+    "require-dev": {
+        "phpstan/phpstan": "^2.1",
+        "phpunit/phpunit": "*"
+    },
+    "autoload": {
+        "psr-4": {
+            "Bag2\\": "src/"
+        }
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "Bag2\\": "tests/"
+        }
+    },
+    "config": {
+        "sort-packages": true
+    }
+}
