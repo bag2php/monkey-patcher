@@ -31,7 +31,7 @@ use Bag2\MonkeyPatcher;
 $patcher = new MonkeyPatcher();
 
 // Declare the class if it does not exist yet
-$patcher->evalIfAvailable('
+$patcher->patch('
 class FizzBuzzer {
     public function fizz(int $n) {
         return $n % 3 === 0 ? "Hizz" : null;
@@ -39,7 +39,7 @@ class FizzBuzzer {
 }', namespace: 'Foo');
 
 // Add a new method (applied immediately when uopz is enabled)
-$patcher->evalIfAvailable('
+$patcher->patch('
 class FizzBuzzer {
     public function buzz(int $n) {
         return $n % 5 === 0 ? "Buzz" : null;
@@ -47,7 +47,7 @@ class FizzBuzzer {
 }', namespace: 'Foo');
 
 // Fix an implementation (applied immediately when uopz is enabled)
-$patcher->evalIfAvailable('
+$patcher->patch('
 class FizzBuzzer {
     public function fizz(int $n) {
         return $n % 3 === 0 ? "Fizz" : null;
@@ -60,7 +60,7 @@ $patcher->disableUopz();
 // If changes could not be applied immediately, restart the REPL and re-evaluate
 if ($patcher->needsRestart()) {
     $repl->restart();
-    $repl->eval($patcher->getRawPhpCode());
+    $repl->eval($patcher->getPendingCode());
 }
 ```
 

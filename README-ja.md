@@ -30,7 +30,7 @@ use Bag2\MonkeyPatcher;
 $patcher = new MonkeyPatcher();
 
 // まだ Foo\FizzBuzzer クラスが宣言されていなければ新しいクラスとして宣言されます
-$patcher->evalIfAvailable('
+$patcher->patch('
 class FizzBuzzer {
     public function fizz(int $n) {
         return $n % 3 === 0 ? "Hizz" : null;
@@ -38,7 +38,7 @@ class FizzBuzzer {
 }', namespace: 'Foo');
 
 // メソッドを追加します (uopzが有効なら即時有効化)
-$patcher->evalIfAvailable('
+$patcher->patch('
 class FizzBuzzer {
     public function buzz(int $n) {
         return $n % 5 === 0 ? "Buzz" : null;
@@ -46,7 +46,7 @@ class FizzBuzzer {
 }', namespace: 'Foo');
 
 // メソッドの実装を訂正します (uopzが有効なら即時有効化)
-$patcher->evalIfAvailable('
+$patcher->patch('
 class FizzBuzzer {
     public function fizz(int $n) {
         return $n % 3 === 0 ? "Fizz" : null;
@@ -59,7 +59,7 @@ $patcher->disableUopz();
 // メソッド変更が即時反映されていなければ、REPLのプロセスを再起動してクラスのコードを評価させます
 if ($patcher->needsRestart()) {
     $repl->restart();
-    $repl->eval($patcher->getRawPhpCode());
+    $repl->eval($patcher->getPendingCode());
 }
 ```
 

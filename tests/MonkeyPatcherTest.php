@@ -20,7 +20,7 @@ final class MonkeyPatcherTest extends TestCase
         $patcher = new MonkeyPatcher();
         $patcher->disableUopz();
 
-        $patcher->evalIfAvailable(<<<PHP
+        $patcher->patch(<<<PHP
             class {$className} {
                 public function greet(): string {
                     return 'hello';
@@ -38,7 +38,7 @@ final class MonkeyPatcherTest extends TestCase
                 }
             }
             PHP;
-        $this->assertSame($expected, $patcher->getRawPhpCode());
+        $this->assertSame($expected, $patcher->getPendingCode());
     }
 
     public function testAddsOrOverridesMethodsWithUopz(): void
@@ -51,7 +51,7 @@ final class MonkeyPatcherTest extends TestCase
         eval("class {$className} { public function target(): string { return 'old'; } }");
 
         $patcher = new MonkeyPatcher();
-        $patcher->evalIfAvailable(<<<PHP
+        $patcher->patch(<<<PHP
             class {$className} {
                 public function target(): string {
                     return 'new';
@@ -95,7 +95,7 @@ final class MonkeyPatcherTest extends TestCase
         $patcher = new MonkeyPatcher();
         $patcher->disableUopz();
 
-        $patcher->evalIfAvailable(<<<PHP
+        $patcher->patch(<<<PHP
             class {$fooShort} {
                 public function one(): string {
                     return 'ONE';
@@ -103,7 +103,7 @@ final class MonkeyPatcherTest extends TestCase
             }
             PHP, namespace: 'Foo');
 
-        $patcher->evalIfAvailable(<<<PHP
+        $patcher->patch(<<<PHP
             class {$barShort} {
                 public function one(): string {
                     return 'two';
@@ -132,6 +132,6 @@ final class MonkeyPatcherTest extends TestCase
                 }
             }
             PHP;
-        $this->assertSame($expected, $patcher->getRawPhpCode());
+        $this->assertSame($expected, $patcher->getPendingCode());
     }
 }

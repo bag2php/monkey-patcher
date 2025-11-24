@@ -37,7 +37,7 @@ final class MonkeyPatcher
         $this->hasUopz = extension_loaded('uopz') && function_exists('uopz_add_function');
     }
 
-    public function evalIfAvailable(string $code, ?string $namespace = null): void
+    public function patch(string $code, ?string $namespace = null): void
     {
         $fullCode = $this->prependNamespace($code, $namespace);
         $classDefinitions = $this->extractClassDefinitions($fullCode);
@@ -77,7 +77,7 @@ final class MonkeyPatcher
         return $this->needsRestart;
     }
 
-    public function hasUopz(): bool
+    public function isUopzAvailable(): bool
     {
         return $this->hasUopz;
     }
@@ -87,7 +87,7 @@ final class MonkeyPatcher
         $this->hasUopz = false;
     }
 
-    public function getRawPhpCode(): string
+    public function getPendingCode(): string
     {
         $chunks = [];
 
