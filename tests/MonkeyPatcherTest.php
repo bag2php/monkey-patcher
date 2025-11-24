@@ -134,4 +134,89 @@ final class MonkeyPatcherTest extends TestCase
             PHP;
         $this->assertSame($expected, $patcher->getPendingCode());
     }
+
+    #[\PHPUnit\Framework\Attributes\DataProvider('provideDocCommentScenarios')]
+    public function testDocCommentHandling(string $firstPatch, ?string $secondPatch, string $expected): void
+    {
+        $patcher = new MonkeyPatcher();
+        $patcher->disableUopz();
+
+        $patcher->patch($firstPatch);
+
+        if ($secondPatch !== null) {
+            $patcher->patch($secondPatch);
+        }
+
+        $this->assertSame($expected, $patcher->getPendingCode());
+    }
+
+    /** @return iterable<list{string, ?string, string}> */
+    public static function provideDocCommentScenarios(): iterable
+    {
+        $classWithDoc = 'Doc_' . str_replace('.', '_', uniqid('', true));
+        $classUpdate = 'DocUpdate_' . str_replace('.', '_', uniqid('', true));
+
+        $keepDocPatch = <<<PHP
+            /**
+             * Sample doc
+             */
+            class {$classWithDoc} {
+                /**
+                 * Say hello
+                 */
+                public function hello(): string {
+                    return "hello";
+                }
+            }
+            PHP;
+        $keepDocExpected = <<<PHP
+            /**
+             * Sample doc
+             */
+            class {$classWithDoc}
+            {
+                /**
+                 * Say hello
+                 */
+                public function hello(): string
+                {
+                    return "hello";
+                }
+            }
+            PHP;
+
+        yield 'keeps-doc-comment' => [$keepDocPatch, null, $keepDocExpected];
+
+        $updateDocFirst = <<<PHP
+            class {$classUpdate} {
+                public function hello(): string {
+                    return "old";
+                }
+            }
+            PHP;
+        $updateDocSecond = <<<PHP
+            class {$classUpdate} {
+                /**
+                 * Updated doc
+                 */
+                public function hello(): string {
+                    return "new";
+                }
+            }
+            PHP;
+        $updateDocExpected = <<<PHP
+            class {$classUpdate}
+            {
+                /**
+                 * Updated doc
+                 */
+                public function hello(): string
+                {
+                    return "new";
+                }
+            }
+            PHP;
+
+        yield 'updates-doc-comment' => [$updateDocFirst, $updateDocSecond, $updateDocExpected];
+    }
 }
