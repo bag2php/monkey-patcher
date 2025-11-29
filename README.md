@@ -62,6 +62,12 @@ if ($patcher->needsRestart()) {
     $repl->restart();
     $repl->eval($patcher->getPendingCode());
 }
+
+// Export merged/original code and unified diff
+$exporter = new \Bag2\Exporter($patcher);
+$exporter->writeMergedTo('/tmp/monkey-merged.php');
+$exporter->writeOriginalTo('/tmp/monkey-original.php');
+$exporter->writeUnifiedDiff('/tmp/monkey.patch');
 ```
 
 ## Copyright

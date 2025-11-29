@@ -26,7 +26,8 @@ end
 ## 使用例
 
 ```php
-use Bag2\MonkeyPatcher;
+use Bag2\MonkeyPatcher\MonkeyPatcher;
+
 $patcher = new MonkeyPatcher();
 
 // まだ Foo\FizzBuzzer クラスが宣言されていなければ新しいクラスとして宣言されます
@@ -61,6 +62,12 @@ if ($patcher->needsRestart()) {
     $repl->restart();
     $repl->eval($patcher->getPendingCode());
 }
+
+// マージ後コードや元コード、diffをファイルに書き出す
+$exporter = new \Bag2\MonkeyPatcher\Exporter($patcher);
+$exporter->writeMergedTo('/tmp/monkey-merged.php');
+$exporter->writeOriginalTo('/tmp/monkey-original.php');
+$exporter->writeUnifiedDiff('/tmp/monkey.patch');
 ```
 
 ## Copyright

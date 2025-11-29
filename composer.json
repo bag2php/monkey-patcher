@@ -12,12 +12,12 @@
     },
     "autoload": {
         "psr-4": {
-            "Bag2\\": "src/"
+            "Bag2\\MonkeyPatcher\\": "src/"
         }
     },
     "autoload-dev": {
         "psr-4": {
-            "Bag2\\": "tests/"
+            "Bag2\\MonkeyPatcher\\": "tests/"
         }
     },
     "config": {

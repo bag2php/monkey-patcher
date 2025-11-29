@@ -2,13 +2,17 @@
 
 declare(strict_types=1);
 
-namespace Bag2;
+namespace Bag2\MonkeyPatcher;
 
 use PHPUnit\Framework\TestCase;
 use PHPUnit\Framework\Attributes\CoversClass;
+use PHPUnit\Framework\Attributes\DataProvider;
 use function extension_loaded;
 use function function_exists;
+use function file_get_contents;
 use function str_replace;
+use function sys_get_temp_dir;
+use function unlink;
 use function uniqid;
 
 #[CoversClass(MonkeyPatcher::class)]
@@ -65,8 +69,8 @@ final class MonkeyPatcherTest extends TestCase
         $instance = new $className();
 
         $this->assertFalse($patcher->needsRestart());
-        $this->assertSame('new', $instance->target());
-        $this->assertSame('added', $instance->added());
+        $this->assertSame('new', $instance->target()); // @phpstan-ignore method.notFound
+        $this->assertSame('added', $instance->added()); // @phpstan-ignore method.notFound
     }
 
     public function testCollectsPatchesAcrossNamespacesWhenUopzDisabled(): void
@@ -135,7 +139,55 @@ final class MonkeyPatcherTest extends TestCase
         $this->assertSame($expected, $patcher->getPendingCode());
     }
 
-    #[\PHPUnit\Framework\Attributes\DataProvider('provideDocCommentScenarios')]
+    public function testExportsMergedOriginalAndDiff(): void
+    {
+        $patcher = new MonkeyPatcher();
+        $patcher->disableUopz();
+        $className = 'Export_' . str_replace('.', '_', uniqid('', true));
+
+        $patcher->patch(<<<PHP
+            class {$className} {
+                public function value(): string {
+                    return "old";
+                }
+            }
+            PHP);
+
+        $patcher->patch(<<<PHP
+            class {$className} {
+                public function value(): string {
+                    return "new";
+                }
+            }
+            PHP);
+
+        $exporter = new Exporter($patcher);
+        $tmp = sys_get_temp_dir();
+        $origPath = "{$tmp}/monkey-original-{$className}.php";
+        $mergedPath = "{$tmp}/monkey-merged-{$className}.php";
+        $diffPath = "{$tmp}/monkey-diff-{$className}.patch";
+
+        $exporter->writeOriginalTo($origPath);
+        $exporter->writeMergedTo($mergedPath);
+        $exporter->writeUnifiedDiff($diffPath);
+
+        $this->assertSame($patcher->getOriginalCode(), file_get_contents($origPath));
+        $this->assertSame($patcher->getPendingCode(), file_get_contents($mergedPath));
+
+        $diff = file_get_contents($diffPath);
+        assert($diff !== false);
+        $this->assertStringContainsString('--- original', $diff);
+        $this->assertStringContainsString('+++ merged', $diff);
+        $this->assertStringContainsString('value(): string', $diff);
+        $this->assertStringContainsString('return "old";', $diff);
+        $this->assertStringContainsString('return "new";', $diff);
+
+        unlink($origPath);
+        unlink($mergedPath);
+        unlink($diffPath);
+    }
+
+    #[DataProvider('provideDocCommentScenarios')]
     public function testDocCommentHandling(string $firstPatch, ?string $secondPatch, string $expected): void
     {
         $patcher = new MonkeyPatcher();

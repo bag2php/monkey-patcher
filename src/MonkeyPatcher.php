@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-namespace Bag2;
+namespace Bag2\MonkeyPatcher;
 
 use Closure;
 use PhpParser\Node;
@@ -29,6 +29,8 @@ final class MonkeyPatcher
     private bool $needsRestart = false;
     /** @var array<string, array{namespace: string|null, uses: Node\Stmt[], class: Node\Stmt\Class_}> */
     private array $rawClasses = [];
+    /** @var array<string, array{namespace: string|null, uses: Node\Stmt[], class: Node\Stmt\Class_}> */
+    private array $originalClasses = [];
 
     public function __construct(?Parser $parser = null, ?PrettyPrinter\Standard $printer = null)
     {
@@ -98,6 +100,17 @@ final class MonkeyPatcher
         return implode(PHP_EOL . PHP_EOL, $chunks);
     }
 
+    public function getOriginalCode(): string
+    {
+        $chunks = [];
+
+        foreach ($this->originalClasses as $class) {
+            $chunks[] = $this->buildClassSource($class['class'], $class['namespace'], $class['uses']);
+        }
+
+        return implode(PHP_EOL . PHP_EOL, $chunks);
+    }
+
     private function prependNamespace(string $code, ?string $namespace): string
     {
         $namespaceLine = $namespace === null || $namespace === ''
@@ -160,6 +173,7 @@ final class MonkeyPatcher
     }
 
     /**
+     * @param list<\PhpParser\Node\Stmt\GroupUse|\PhpParser\Node\Stmt\Use_> $useStatements
      * @return array{fqcn: string, namespace: string|null, class: Node\Stmt\Class_, methods: array<string, Node\Stmt\ClassMethod>, uses: Node\Stmt[]}
      */
     private function buildClassDefinition(Node\Stmt\Class_ $class, ?string $namespace, array $useStatements): array
@@ -317,6 +331,7 @@ final class MonkeyPatcher
             }
         }
 
+        // @phpstan-ignore argument.type (Need to fix PHPStan upstream.)
         uopz_add_function($className, $methodName, $closure, $flags);
     }
 
@@ -337,41 +352,41 @@ final class MonkeyPatcher
 
     private function resolveFlags(Node\Stmt\ClassMethod $method): int
     {
-        $flags = $this->zendAcc('ZEND_ACC_PUBLIC');
+        $flags = ZEND_ACC_PUBLIC;
 
         if ($method->isProtected()) {
-            $flags = $this->zendAcc('ZEND_ACC_PROTECTED');
+            $flags = ZEND_ACC_PROTECTED;
         } elseif ($method->isPrivate()) {
-            $flags = $this->zendAcc('ZEND_ACC_PRIVATE');
+            $flags = ZEND_ACC_PRIVATE;
         }
 
         if ($method->isStatic()) {
-            $flags |= $this->zendAcc('ZEND_ACC_STATIC');
+            $flags |= ZEND_ACC_STATIC;
         }
 
         if ($method->isAbstract()) {
-            $flags |= $this->zendAcc('ZEND_ACC_ABSTRACT');
+            $flags |= ZEND_ACC_ABSTRACT;
         }
 
         if ($method->isFinal()) {
-            $flags |= $this->zendAcc('ZEND_ACC_FINAL');
+            $flags |= ZEND_ACC_FINAL;
         }
 
         return $flags;
     }
 
-    private function zendAcc(string $name): int
-    {
-        return defined($name) ? (int) constant($name) : 0;
-    }
-
-    /** @param array{fqcn: string, namespace: string|null, class: Node\Stmt\Class_, methods: array<string, Node\Stmt\ClassMethod>, uses: Node\Stmt[]} $definition */
+    /** @param array{fqcn: string, namespace: string|null, class: Node\Stmt\Class_, methods: array<string, Node\Stmt\ClassMethod>, uses: list<Node\Stmt>} $definition */
     private function storeRawClass(array $definition): void
     {
         $fqcn = $definition['fqcn'];
 
         if (!isset($this->rawClasses[$fqcn])) {
             $this->rawClasses[$fqcn] = [
+                'namespace' => $definition['namespace'],
+                'uses' => $this->cloneNodes($definition['uses']),
+                'class' => $this->cloneNode($definition['class']),
+            ];
+            $this->originalClasses[$fqcn] = [
                 'namespace' => $definition['namespace'],
                 'uses' => $this->cloneNodes($definition['uses']),
                 'class' => $this->cloneNode($definition['class']),
@@ -434,16 +449,22 @@ final class MonkeyPatcher
     }
 
     /**
-     * @param list<Node> $nodes
-     * @return list<Node>
+     * @template T of Node
+     * @param list<T> $nodes
+     * @return list<T>
      */
     private function cloneNodes(array $nodes): array
     {
         $traverser = new NodeTraverser(new CloningVisitor());
-        /** @var list<Node> */
+        /** @var list<T> */
         return $traverser->traverse($nodes);
     }
 
+    /**
+     * @template T of Node
+     * @param T $node
+     * @return T
+     */
     private function cloneNode(Node $node): Node
     {
         return $this->cloneNodes([$node])[0];
