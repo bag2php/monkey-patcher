@@ -1,0 +1,64 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        php: ['7.4', '8.0', '8.1', '8.2', '8.3', '8.4', '8.5']
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: ${{ matrix.php }}
+          tools: composer
+          coverage: none
+
+      - name: Install uopz
+        run: |
+          set -eux
+          PHP_VER=$(php -r 'echo PHP_VERSION;')
+          confd=$(php -r 'echo PHP_CONFIG_FILE_SCAN_DIR ?: (PHP_BINDIR."/../etc/php/".PHP_MAJOR_VERSION.".".PHP_MINOR_VERSION."/conf.d");')
+          sudo mkdir -p "$confd"
+          if php -r 'exit(version_compare(PHP_VERSION, "8.4.0", "<") ? 0 : 1);'; then
+            if php -r 'exit(version_compare(PHP_VERSION, "8.0.0", "<") ? 0 : 1);'; then
+              printf "\\n" | sudo pecl install uopz-6.1.2
+            else
+              printf "\\n" | sudo pecl install uopz
+            fi
+          else
+            git clone --depth 1 https://github.com/krakjoe/uopz.git /tmp/uopz
+            cd /tmp/uopz
+            phpize
+            ./configure
+            make -j"$(nproc)"
+            sudo make install
+          fi
+          echo "extension=uopz.so" | sudo tee "$confd/uopz.ini"
+
+      - name: Detect composer cache dir
+        id: composer-cache
+        run: echo "dir=$(composer config cache-dir)" >> "$GITHUB_OUTPUT"
+
+      - name: Cache composer
+        uses: actions/cache@v4
+        with:
+          path: ${{ steps.composer-cache.outputs.dir }}
+          key: ${{ runner.os }}-php-${{ matrix.php }}-prefer-${{ matrix.prefer-lowest }}-composer-${{ hashFiles('composer.json', 'composer.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-php-${{ matrix.php }}-composer-
+
+      - name: Install dependencies
+        run: composer install --no-interaction --no-progress
+
+      - name: Run tests
+        run: ./vendor/bin/phpunit
