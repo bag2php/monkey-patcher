@@ -14,8 +14,11 @@ use function mkdir;
 
 final class Exporter
 {
-    public function __construct(private MonkeyPatcher $patcher)
+    private MonkeyPatcher $patcher;
+
+    public function __construct(MonkeyPatcher $patcher)
     {
+        $this->patcher = $patcher;
     }
 
     public function writeMergedTo(string $path): void
