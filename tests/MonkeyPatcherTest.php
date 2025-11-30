@@ -187,6 +187,7 @@ final class MonkeyPatcherTest extends TestCase
         unlink($diffPath);
     }
 
+    /** @dataProvider provideDocCommentScenarios */
     #[DataProvider('provideDocCommentScenarios')]
     public function testDocCommentHandling(string $firstPatch, ?string $secondPatch, string $expected): void
     {
