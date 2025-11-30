@@ -1,6 +1,6 @@
 {
     "name": "bag2/monkey-patcher",
-    "description": "Runtime monkey patching (open classes) for PHP via PHP-Parser and uopz when available",
+    "description": "Runtime monkey patching (open classes/functions) for PHP via PHP-Parser and uopz when available",
     "license": "Apache-2.0",
     "require": {
         "php": "^8.0 || ^7.4",

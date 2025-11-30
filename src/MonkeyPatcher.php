@@ -12,6 +12,7 @@ use PhpParser\Parser;
 use PhpParser\ParserFactory;
 use PhpParser\PrettyPrinter;
 use PhpParser\NodeVisitor\CloningVisitor;
+use ReflectionFunction;
 use function class_exists;
 use function extension_loaded;
 use function file;
@@ -31,6 +32,10 @@ final class MonkeyPatcher
     private array $rawClasses = [];
     /** @var array<string, array{namespace: string|null, uses: Node\Stmt[], class: Node\Stmt\Class_}> */
     private array $originalClasses = [];
+    /** @var array<string, array{namespace: string|null, uses: Node\Stmt[], function: Node\Stmt\Function_}> */
+    private array $rawFunctions = [];
+    /** @var array<string, array{namespace: string|null, uses: Node\Stmt[], function: Node\Stmt\Function_}> */
+    private array $originalFunctions = [];
 
     public function __construct(?Parser $parser = null, ?PrettyPrinter\Standard $printer = null)
     {
@@ -42,7 +47,9 @@ final class MonkeyPatcher
     public function patch(string $code, ?string $namespace = null): void
     {
         $fullCode = $this->prependNamespace($code, $namespace);
-        $classDefinitions = $this->extractClassDefinitions($fullCode);
+        $definitions = $this->extractDefinitions($fullCode);
+        $classDefinitions = $definitions['classes'];
+        $functionDefinitions = $definitions['functions'];
 
         foreach ($classDefinitions as $definition) {
             $className = $definition['fqcn'];
@@ -69,8 +76,37 @@ final class MonkeyPatcher
             }
         }
 
+        foreach ($functionDefinitions as $definition) {
+            $functionName = $definition['fqfn'];
+            $functionExists = function_exists($functionName);
+
+            if (!$functionExists) {
+                $this->declareFunction($definition['function'], $definition['namespace'], $definition['uses']);
+                $functionExists = true;
+            }
+
+            if ($functionExists) {
+                $existing = $this->getReflectedFunctionAst($functionName);
+
+                if ($existing !== null && $this->nodesEqual($existing, $definition['function'])) {
+                    continue;
+                }
+
+                if ($this->hasUopz) {
+                    $this->addFunctionWithUopz($functionName, $definition['function']);
+                    continue;
+                }
+
+                $this->needsRestart = true;
+            }
+        }
+
         foreach ($classDefinitions as $definition) {
             $this->storeRawClass($definition);
+        }
+
+        foreach ($functionDefinitions as $definition) {
+            $this->storeRawFunction($definition);
         }
     }
 
@@ -91,24 +127,12 @@ final class MonkeyPatcher
 
     public function getPendingCode(): string
     {
-        $chunks = [];
-
-        foreach ($this->rawClasses as $class) {
-            $chunks[] = $this->buildClassSource($class['class'], $class['namespace'], $class['uses']);
-        }
-
-        return implode(PHP_EOL . PHP_EOL, $chunks);
+        return $this->buildSources($this->rawFunctions, $this->rawClasses);
     }
 
     public function getOriginalCode(): string
     {
-        $chunks = [];
-
-        foreach ($this->originalClasses as $class) {
-            $chunks[] = $this->buildClassSource($class['class'], $class['namespace'], $class['uses']);
-        }
-
-        return implode(PHP_EOL . PHP_EOL, $chunks);
+        return $this->buildSources($this->originalFunctions, $this->originalClasses);
     }
 
     private function prependNamespace(string $code, ?string $namespace): string
@@ -120,11 +144,17 @@ final class MonkeyPatcher
         return "<?php\n{$namespaceLine}" . trim($code) . "\n";
     }
 
-    /** @return list<array{fqcn: string, namespace: string|null, class: Node\Stmt\Class_, methods: array<string, Node\Stmt\ClassMethod>, uses: Node\Stmt[]}> */
-    private function extractClassDefinitions(string $code): array
+    /**
+     * @return array{
+     *     classes: list<array{fqcn: string, namespace: string|null, class: Node\Stmt\Class_, methods: array<string, Node\Stmt\ClassMethod>, uses: Node\Stmt[]}>,
+     *     functions: list<array{fqfn: string, namespace: string|null, function: Node\Stmt\Function_, uses: Node\Stmt[]}>,
+     * }
+     */
+    private function extractDefinitions(string $code): array
     {
         $statements = $this->parser->parse($code) ?? [];
-        $definitions = [];
+        $classes = [];
+        $functions = [];
         $useStatements = [];
 
         foreach ($statements as $statement) {
@@ -134,31 +164,39 @@ final class MonkeyPatcher
             }
 
             if ($statement instanceof Node\Stmt\Namespace_) {
-                $definitions = [
-                    ...$definitions,
-                    ...$this->collectClasses(
-                        $statement->stmts,
-                        isset($statement->name) ? $statement->name->toString() : null,
-                    ),
-                ];
+                $collected = $this->collectMembers(
+                    $statement->stmts,
+                    isset($statement->name) ? $statement->name->toString() : null,
+                );
+                $classes = [...$classes, ...$collected['classes']];
+                $functions = [...$functions, ...$collected['functions']];
                 continue;
             }
 
             if ($statement instanceof Node\Stmt\Class_) {
-                $definitions[] = $this->buildClassDefinition($statement, null, $useStatements);
+                $classes[] = $this->buildClassDefinition($statement, null, $useStatements);
+                continue;
+            }
+
+            if ($statement instanceof Node\Stmt\Function_) {
+                $functions[] = $this->buildFunctionDefinition($statement, null, $useStatements);
             }
         }
 
-        return $definitions;
+        return ['classes' => $classes, 'functions' => $functions];
     }
 
     /**
      * @param Node\Stmt[] $stmts
-     * @return list<array{fqcn: string, namespace: string|null, class: Node\Stmt\Class_, methods: array<string, Node\Stmt\ClassMethod>, uses: Node\Stmt[]}>
+     * @return array{
+     *     classes: list<array{fqcn: string, namespace: string|null, class: Node\Stmt\Class_, methods: array<string, Node\Stmt\ClassMethod>, uses: Node\Stmt[]}>,
+     *     functions: list<array{fqfn: string, namespace: string|null, function: Node\Stmt\Function_, uses: Node\Stmt[]}>,
+     * }
      */
-    private function collectClasses(array $stmts, ?string $namespace): array
+    private function collectMembers(array $stmts, ?string $namespace): array
     {
-        $definitions = [];
+        $classes = [];
+        $functions = [];
         $useStatements = [];
 
         foreach ($stmts as $stmt) {
@@ -168,15 +206,20 @@ final class MonkeyPatcher
             }
 
             if ($stmt instanceof Node\Stmt\Class_) {
-                $definitions[] = $this->buildClassDefinition($stmt, $namespace, $useStatements);
+                $classes[] = $this->buildClassDefinition($stmt, $namespace, $useStatements);
+                continue;
+            }
+
+            if ($stmt instanceof Node\Stmt\Function_) {
+                $functions[] = $this->buildFunctionDefinition($stmt, $namespace, $useStatements);
             }
         }
 
-        return $definitions;
+        return ['classes' => $classes, 'functions' => $functions];
     }
 
     /**
-     * @param list<\PhpParser\Node\Stmt\GroupUse|\PhpParser\Node\Stmt\Use_> $useStatements
+     * @param list<Node\Stmt\GroupUse|Node\Stmt\Use_> $useStatements
      * @return array{fqcn: string, namespace: string|null, class: Node\Stmt\Class_, methods: array<string, Node\Stmt\ClassMethod>, uses: Node\Stmt[]}
      */
     private function buildClassDefinition(Node\Stmt\Class_ $class, ?string $namespace, array $useStatements): array
@@ -200,11 +243,38 @@ final class MonkeyPatcher
     }
 
     /**
+     * @param list<Node\Stmt\GroupUse|Node\Stmt\Use_> $useStatements
+     * @return array{fqfn: string, namespace: string|null, function: Node\Stmt\Function_, uses: Node\Stmt[]}
+     */
+    private function buildFunctionDefinition(Node\Stmt\Function_ $function, ?string $namespace, array $useStatements): array
+    {
+        $name = $function->name->toString();
+        $fqfn = $namespace ? "{$namespace}\\{$name}" : $name;
+
+        return [
+            'fqfn' => $fqfn,
+            'namespace' => $namespace,
+            'function' => $function,
+            'uses' => $useStatements,
+        ];
+    }
+
+    /**
      * @param Node\Stmt[] $useStatements
      */
     private function declareClass(Node\Stmt\Class_ $class, ?string $namespace, array $useStatements): void
     {
         $code = $this->buildClassSource($class, $namespace, $useStatements);
+
+        eval($code);
+    }
+
+    /**
+     * @param Node\Stmt[] $useStatements
+     */
+    private function declareFunction(Node\Stmt\Function_ $function, ?string $namespace, array $useStatements): void
+    {
+        $code = $this->buildFunctionSource($function, $namespace, $useStatements);
 
         eval($code);
     }
@@ -252,6 +322,45 @@ final class MonkeyPatcher
         }
 
         return null;
+    }
+
+    private function getReflectedFunctionAst(string $functionName): ?Node\Stmt\Function_
+    {
+        if (!function_exists($functionName)) {
+            return null;
+        }
+
+        $reflection = new ReflectionFunction($functionName);
+        $fileName = $reflection->getFileName();
+        $startLine = $reflection->getStartLine();
+        $endLine = $reflection->getEndLine();
+
+        if (!$fileName || !file_exists($fileName) || $startLine === false || $endLine === false) {
+            return null;
+        }
+
+        $lines = file($fileName);
+
+        if ($lines === false) {
+            return null;
+        }
+
+        $functionLines = array_slice($lines, $startLine - 1, $endLine - $startLine + 1);
+        $stub = "<?php\n" . implode('', $functionLines);
+        $stmts = $this->parser->parse($stub);
+
+        if ($stmts === null) {
+            return null;
+        }
+
+        $nodeFinder = new NodeFinder();
+        $function = $nodeFinder->findFirstInstanceOf($stmts, Node\Stmt\Function_::class);
+
+        if (!$function instanceof Node\Stmt\Function_) {
+            return null;
+        }
+
+        return $function;
     }
 
     private function nodesEqual(Node $left, Node $right): bool
@@ -338,6 +447,49 @@ final class MonkeyPatcher
         uopz_add_function($className, $methodName, $closure, $flags);
     }
 
+    private function addFunctionWithUopz(string $functionName, Node\Stmt\Function_ $function): void
+    {
+        $closureNode = new Node\Expr\Closure([
+            'byRef' => $function->byRef,
+            'params' => $function->params,
+            'returnType' => $function->returnType,
+            'stmts' => $function->stmts ?? [],
+            'attrGroups' => $function->attrGroups,
+        ]);
+
+        $code = $this->printer->prettyPrintExpr($closureNode);
+        /** @var Closure $closure */
+        $closure = eval("return {$code};");
+
+        if (function_exists($functionName)) {
+            if (function_exists('uopz_set_return')) {
+                uopz_set_return($functionName, $closure, true);
+                return;
+            }
+
+            if (function_exists('uopz_del_function')) {
+                try {
+                    uopz_del_function($functionName);
+                } catch (\Throwable $e) {
+                    $this->needsRestart = true;
+                    return;
+                }
+            } elseif (function_exists('uopz_delete')) {
+                try {
+                    uopz_delete($functionName);
+                } catch (\Throwable $e) {
+                    $this->needsRestart = true;
+                    return;
+                }
+            } else {
+                $this->needsRestart = true;
+                return;
+            }
+        }
+
+        uopz_add_function($functionName, $closure);
+    }
+
     /**
      * @param Node\Stmt[] $useStatements
      */
@@ -351,6 +503,40 @@ final class MonkeyPatcher
         }
 
         return $code;
+    }
+
+    /**
+     * @param Node\Stmt[] $useStatements
+     */
+    private function buildFunctionSource(Node\Stmt\Function_ $function, ?string $namespace, array $useStatements): string
+    {
+        $stmts = [...$useStatements, $function];
+        $code = $this->printer->prettyPrint($stmts);
+
+        if ($namespace) {
+            return "namespace {$namespace};\n{$code}";
+        }
+
+        return $code;
+    }
+
+    /**
+     * @param array<string, array{namespace: string|null, uses: Node\Stmt[], function: Node\Stmt\Function_}> $functions
+     * @param array<string, array{namespace: string|null, uses: Node\Stmt[], class: Node\Stmt\Class_}> $classes
+     */
+    private function buildSources(array $functions, array $classes): string
+    {
+        $chunks = [];
+
+        foreach ($functions as $function) {
+            $chunks[] = $this->buildFunctionSource($function['function'], $function['namespace'], $function['uses']);
+        }
+
+        foreach ($classes as $class) {
+            $chunks[] = $this->buildClassSource($class['class'], $class['namespace'], $class['uses']);
+        }
+
+        return implode(PHP_EOL . PHP_EOL, $chunks);
     }
 
     private function resolveFlags(Node\Stmt\ClassMethod $method): int
@@ -408,6 +594,34 @@ final class MonkeyPatcher
             'namespace' => $definition['namespace'] ?? $existing['namespace'],
             'uses' => $this->mergeUses($existing['uses'], $definition['uses']),
             'class' => $classNode,
+        ];
+    }
+
+    /** @param array{fqfn: string, namespace: string|null, function: Node\Stmt\Function_, uses: list<Node\Stmt>} $definition */
+    private function storeRawFunction(array $definition): void
+    {
+        $fqfn = $definition['fqfn'];
+
+        if (!isset($this->rawFunctions[$fqfn])) {
+            $this->rawFunctions[$fqfn] = [
+                'namespace' => $definition['namespace'],
+                'uses' => $this->cloneNodes($definition['uses']),
+                'function' => $this->cloneNode($definition['function']),
+            ];
+            $this->originalFunctions[$fqfn] = [
+                'namespace' => $definition['namespace'],
+                'uses' => $this->cloneNodes($definition['uses']),
+                'function' => $this->cloneNode($definition['function']),
+            ];
+            return;
+        }
+
+        $existing = $this->rawFunctions[$fqfn];
+
+        $this->rawFunctions[$fqfn] = [
+            'namespace' => $definition['namespace'] ?? $existing['namespace'],
+            'uses' => $this->mergeUses($existing['uses'], $definition['uses']),
+            'function' => $this->cloneNode($definition['function']),
         ];
     }
 

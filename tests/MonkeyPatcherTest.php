@@ -176,15 +176,79 @@ final class MonkeyPatcherTest extends TestCase
 
         $diff = file_get_contents($diffPath);
         assert($diff !== false);
-        $this->assertStringContainsString('--- original', $diff);
-        $this->assertStringContainsString('+++ merged', $diff);
-        $this->assertStringContainsString('value(): string', $diff);
-        $this->assertStringContainsString('return "old";', $diff);
-        $this->assertStringContainsString('return "new";', $diff);
+        $expectedDiff = $this->renderUnifiedDiff($patcher->getOriginalCode(), $patcher->getPendingCode());
+        $this->assertSame($expectedDiff, $diff);
 
         unlink($origPath);
         unlink($mergedPath);
         unlink($diffPath);
+    }
+
+    public function testOverridesFunctionsWithUopz(): void
+    {
+        if (!extension_loaded('uopz') || !function_exists('uopz_add_function')) {
+            $this->markTestSkipped('uopz extension is not available');
+        }
+
+        $functionName = 'func_' . str_replace('.', '_', uniqid('', true));
+        $addedFunction = $functionName . '_added';
+
+        eval(<<<PHP
+            function {$functionName}(): string {
+                return 'old';
+            }
+            PHP);
+
+        $patcher = new MonkeyPatcher();
+        $patcher->patch(<<<PHP
+            function {$functionName}(): string {
+                return 'new';
+            }
+            function {$addedFunction}(): string {
+                return 'added';
+            }
+            PHP);
+
+        $this->assertFalse($patcher->needsRestart());
+        $this->assertSame('new', ($functionName)());
+        $this->assertSame('added', ($addedFunction)());
+    }
+
+    public function testCollectsFunctionPatchesWhenUopzDisabled(): void
+    {
+        $alpha = 'functionA_' . str_replace('.', '_', uniqid('', true));
+        $beta = 'functionB_' . str_replace('.', '_', uniqid('', true));
+
+        $patcher = new MonkeyPatcher();
+        $patcher->disableUopz();
+
+        $patcher->patch(<<<PHP
+            function {$alpha}(): string {
+                return 'A';
+            }
+            PHP, 'Foo\\Alpha');
+
+        $patcher->patch(<<<PHP
+            function {$beta}(): string {
+                return 'B';
+            }
+            PHP, 'Bar\\Beta');
+
+        $this->assertTrue($patcher->needsRestart());
+        $expected = <<<PHP
+            namespace Foo\\Alpha;
+            function {$alpha}(): string
+            {
+                return 'A';
+            }
+
+            namespace Bar\\Beta;
+            function {$beta}(): string
+            {
+                return 'B';
+            }
+            PHP;
+        $this->assertSame($expected, $patcher->getPendingCode());
     }
 
     /** @dataProvider provideDocCommentScenarios */
@@ -271,5 +335,92 @@ final class MonkeyPatcherTest extends TestCase
             PHP;
 
         yield 'updates-doc-comment' => [$updateDocFirst, $updateDocSecond, $updateDocExpected];
+
+        $functionName = 'func_' . str_replace('.', '_', uniqid('', true));
+        $functionUpdated = 'funcUpdated_' . str_replace('.', '_', uniqid('', true));
+
+        $keepFunctionDoc = <<<PHP
+            /**
+             * Describe function
+             */
+            function {$functionName}(): string {
+                return "keep";
+            }
+            PHP;
+        $keepFunctionExpected = <<<PHP
+            /**
+             * Describe function
+             */
+            function {$functionName}(): string
+            {
+                return "keep";
+            }
+            PHP;
+        yield 'keeps-function-doc' => [$keepFunctionDoc, null, $keepFunctionExpected];
+
+        $updateFunctionFirst = <<<PHP
+            function {$functionUpdated}(): string {
+                return "old";
+            }
+            PHP;
+        $updateFunctionSecond = <<<PHP
+            /**
+             * Updated function doc
+             */
+            function {$functionUpdated}(): string {
+                return "new";
+            }
+            PHP;
+        $updateFunctionExpected = <<<PHP
+            /**
+             * Updated function doc
+             */
+            function {$functionUpdated}(): string
+            {
+                return "new";
+            }
+            PHP;
+        yield 'updates-function-doc' => [$updateFunctionFirst, $updateFunctionSecond, $updateFunctionExpected];
+    }
+
+    private function renderUnifiedDiff(string $original, string $merged): string
+    {
+        $header = "--- original\n+++ merged\n";
+
+        if (class_exists(\SebastianBergmann\Diff\Differ::class)) {
+            $builder = new \SebastianBergmann\Diff\Output\UnifiedDiffOutputBuilder($header);
+            $differ = new \SebastianBergmann\Diff\Differ($builder);
+            return $differ->diff($original, $merged);
+        }
+
+        $origLines = explode("\n", $original);
+        $mergedLines = explode("\n", $merged);
+        $diff = [];
+        $max = max(count($origLines), count($mergedLines));
+
+        for ($i = 0; $i < $max; $i++) {
+            $old = $origLines[$i] ?? null;
+            $new = $mergedLines[$i] ?? null;
+
+            if ($old === $new) {
+                $diff[] = ' ' . ($old ?? '');
+                continue;
+            }
+
+            if ($old !== null) {
+                $diff[] = '-' . $old;
+            }
+
+            if ($new !== null) {
+                $diff[] = '+' . $new;
+            }
+        }
+
+        $countOld = count($origLines);
+        $countNew = count($mergedLines);
+
+        array_unshift($diff, "@@ -1,{$countOld} +1,{$countNew} @@");
+
+        return $header . implode("\n", $diff) . "\n";
     }
 }

@@ -1,6 +1,6 @@
 # Bag2\MonkeyPatcher
 
-PHPで「オープンクラス」を実現するための実行時パッチャーです。PHP-Parserで新旧コードを解析し、uopzが使える場合はメソッドをクロージャ化して動的に差し替えます。uopzが無効な場合でも、再評価に必要なコードを蓄えてREPL再起動後に適用できます。
+PHPで「オープンクラス」を実現するための実行時パッチャーです。PHP-Parserで新旧コードを解析し、uopzが使える場合はメソッドや関数をクロージャ化して動的に差し替えます。uopzが無効な場合でも、再評価に必要なコードを蓄えてREPL再起動後に適用できます。
 
 ## コンセプト
 
@@ -52,6 +52,16 @@ class FizzBuzzer {
     public function fizz(int $n) {
         return $n % 3 === 0 ? "Fizz" : null;
     }
+}', namespace: 'Foo');
+
+// 関数の実装を差し替えつつ新しい関数も追加します
+$patcher->patch('
+function fizz(int $n) {
+    return $n % 3 === 0 ? "Fizz" : null;
+}
+
+function buzz(int $n) {
+    return $n % 5 === 0 ? "Buzz" : null;
 }', namespace: 'Foo');
 
 // uopzを強制無効化したい場合

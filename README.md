@@ -1,6 +1,6 @@
 # Bag2\MonkeyPatcher
 
-This package enables dynamic declaration addition in PHP—similar to Ruby's "open classes"—by parsing new code, comparing it to currently loaded implementations, and applying changes immediately when [uopz](https://www.php.net/manual/en/book.uopz.php) is available.
+This package enables dynamic declaration addition in PHP—similar to Ruby's "open classes"—by parsing new code, comparing it to currently loaded implementations, and applying changes immediately when [uopz](https://www.php.net/manual/en/book.uopz.php) is available. It works for both class methods and namespaced/global functions.
 
 日本語版は [README-ja.md](README-ja.md) を参照してください。
 
@@ -54,6 +54,16 @@ class FizzBuzzer {
     }
 }', namespace: 'Foo');
 
+// Override a function and add a new one
+$patcher->patch('
+function fizz(int $n) {
+    return $n % 3 === 0 ? "Fizz" : null;
+}
+
+function buzz(int $n) {
+    return $n % 5 === 0 ? "Buzz" : null;
+}', namespace: 'Foo');
+
 // Force the non-uopz path even if the extension is loaded
 $patcher->disableUopz();
 
@@ -64,7 +74,7 @@ if ($patcher->needsRestart()) {
 }
 
 // Export merged/original code and unified diff
-$exporter = new \Bag2\Exporter($patcher);
+$exporter = new \Bag2\MonkeyPatcher\Exporter($patcher);
 $exporter->writeMergedTo('/tmp/monkey-merged.php');
 $exporter->writeOriginalTo('/tmp/monkey-original.php');
 $exporter->writeUnifiedDiff('/tmp/monkey.patch');
