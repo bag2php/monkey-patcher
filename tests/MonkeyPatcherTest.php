@@ -105,7 +105,7 @@ final class MonkeyPatcherTest extends TestCase
                     return 'ONE';
                 }
             }
-            PHP, namespace: 'Foo');
+            PHP, 'Foo');
 
         $patcher->patch(<<<PHP
             class {$barShort} {
@@ -113,7 +113,7 @@ final class MonkeyPatcherTest extends TestCase
                     return 'two';
                 }
             }
-            PHP, namespace: 'Bar');
+            PHP, 'Bar');
 
         $this->assertTrue($patcher->needsRestart());
 
