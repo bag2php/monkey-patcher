@@ -136,7 +136,10 @@ final class MonkeyPatcher
             if ($statement instanceof Node\Stmt\Namespace_) {
                 $definitions = [
                     ...$definitions,
-                    ...$this->collectClasses($statement->stmts, $statement->name?->toString()),
+                    ...$this->collectClasses(
+                        $statement->stmts,
+                        isset($statement->name) ? $statement->name->toString() : null,
+                    ),
                 ];
                 continue;
             }
@@ -184,7 +187,7 @@ final class MonkeyPatcher
             $methods[$method->name->toString()] = $method;
         }
 
-        $shortName = $class->name?->toString() ?? '';
+        $shortName = isset($class->name) ? $class->name->toString() : '';
         $fqcn = $namespace ? "{$namespace}\\{$shortName}" : $shortName;
 
         return [
@@ -314,14 +317,14 @@ final class MonkeyPatcher
             if (function_exists('uopz_del_function')) {
                 try {
                     uopz_del_function($className, $methodName);
-                } catch (\Throwable) {
+                } catch (\Throwable $e) {
                     $this->needsRestart = true;
                     return;
                 }
             } elseif (function_exists('uopz_delete')) {
                 try {
                     uopz_delete($className, $methodName);
-                } catch (\Throwable) {
+                } catch (\Throwable $e) {
                     $this->needsRestart = true;
                     return;
                 }
